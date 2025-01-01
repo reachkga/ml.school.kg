@@ -34,7 +34,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install psutil mlflow
+        pip install scikit-learn pandas numpy keras jax[cpu] boto3 packaging mlflow setuptools python-dotenv psutil metaflow matplotlib
 
     - name: Create MLflow directories
       run: |
