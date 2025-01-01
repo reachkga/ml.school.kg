@@ -278,6 +278,10 @@ class Training(FlowSpec, FlowMixin):
     @environment(
         vars={
             "KERAS_BACKEND": os.getenv("KERAS_BACKEND", "jax"),
+            "MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING": "true",
+            "MLFLOW_HTTP_REQUEST_MAX_RETRIES": "5",
+            "MLFLOW_HTTP_REQUEST_TIMEOUT": "300",
+            "MLFLOW_TRACKING_INSECURE_TLS": "true"
         },
     )
     @step
@@ -288,6 +292,11 @@ class Training(FlowSpec, FlowMixin):
         import matplotlib.pyplot as plt
         from sklearn.metrics import confusion_matrix
         from io import BytesIO
+        import psutil
+        import platform
+        import sys
+        import time
+        from mlflow.exceptions import MlflowException
         
         # Merge existing artifacts
         self.merge_artifacts(
@@ -359,17 +368,62 @@ class Training(FlowSpec, FlowMixin):
         )
         plt.close()
 
-        # Log metrics to MLflow as before
-        mlflow.set_tracking_uri(self.mlflow_tracking_uri)
-        with mlflow.start_run(run_id=self.mlflow_run_id):
-            mlflow.log_metrics(
-                {
-                    "cross_validation_accuracy": self.accuracy,
-                    "cross_validation_accuracy_std": self.accuracy_std,
-                    "cross_validation_loss": self.loss,
-                    "cross_validation_loss_std": self.loss_std,
-                },
-            )
+        # Log to MLflow with retry logic
+        max_retries = 3
+        retry_delay = 5  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                mlflow.set_tracking_uri(self.mlflow_tracking_uri)
+                with mlflow.start_run(run_id=self.mlflow_run_id):
+                    # Log metrics
+                    mlflow.log_metrics({
+                        "cross_validation_accuracy": self.accuracy,
+                        "cross_validation_accuracy_std": self.accuracy_std,
+                        "cross_validation_loss": self.loss,
+                        "cross_validation_loss_std": self.loss_std,
+                    })
+
+                    # Log system metrics
+                    mlflow.log_metrics({
+                        "cpu_percent": psutil.cpu_percent(),
+                        "memory_percent": psutil.virtual_memory().percent,
+                        "disk_usage_percent": psutil.disk_usage('/').percent,
+                    })
+
+                    # Log system parameters
+                    mlflow.log_params({
+                        "python_version": sys.version,
+                        "platform": platform.platform(),
+                        "processor": platform.processor(),
+                        "cpu_count": psutil.cpu_count(),
+                        "total_memory_gb": round(psutil.virtual_memory().total / (1024**3), 2),
+                        "machine": platform.machine(),
+                        "os": platform.system(),
+                    })
+
+                    # Try to log GPU info if available
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            mlflow.log_params({
+                                "gpu_name": torch.cuda.get_device_name(0),
+                                "gpu_count": torch.cuda.device_count(),
+                            })
+                    except ImportError:
+                        pass
+
+                # If we get here, logging was successful
+                break
+                
+            except MlflowException as e:
+                if attempt == max_retries - 1:  # Last attempt
+                    print(f"Warning: Failed to log to MLflow after {max_retries} attempts. Error: {e}")
+                    # Continue execution without MLflow logging
+                else:
+                    print(f"MLflow logging attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
 
         self.next(self.register_model)
 
@@ -403,6 +457,7 @@ class Training(FlowSpec, FlowMixin):
     @environment(
         vars={
             "KERAS_BACKEND": os.getenv("KERAS_BACKEND", "jax"),
+            "MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING": "true"
         }
     )
     @step
@@ -414,11 +469,19 @@ class Training(FlowSpec, FlowMixin):
         import mlflow
         import sys
         from pathlib import Path
-
-        # Let's log the training process under the experiment we started at the
-        # beginning of the flow.
+        import psutil
+        
         mlflow.set_tracking_uri(self.mlflow_tracking_uri)
         with mlflow.start_run(run_id=self.mlflow_run_id):
+            # Enable autologging without the invalid parameters
+            mlflow.autolog(log_models=False)
+
+            # Log initial system state
+            mlflow.log_metrics({
+                "initial_cpu_percent": psutil.cpu_percent(),
+                "initial_memory_percent": psutil.virtual_memory().percent,
+            })
+
             # Let's disable the automatic logging of models during training so we
             # can log the model manually during the registration step.
             mlflow.autolog(log_models=False)
@@ -447,6 +510,12 @@ class Training(FlowSpec, FlowMixin):
 
             # Let's log the training parameters we used to train the model.
             mlflow.log_params(self.training_parameters)
+
+            # Log final system state
+            mlflow.log_metrics({
+                "final_cpu_percent": psutil.cpu_percent(),
+                "final_memory_percent": psutil.virtual_memory().percent,
+            })
 
         # After we finish training the model, we want to register it.
         self.next(self.register_model)
