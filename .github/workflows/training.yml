@@ -10,17 +10,6 @@ on:
 jobs:
   train:
     runs-on: ubuntu-latest
-    
-    services:
-      mlflow:
-        image: ghcr.io/mlflow/mlflow:latest
-        ports:
-          - 5000:5000
-        options: >-
-          --health-cmd "curl -f http://localhost:5000/health"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
     - uses: actions/checkout@v4
@@ -36,13 +25,20 @@ jobs:
         python -m pip install --upgrade pip
         pip install scikit-learn pandas numpy keras jax[cpu] boto3 packaging mlflow setuptools python-dotenv psutil metaflow matplotlib
 
-    - name: Create MLflow directories
+    - name: Create MLflow directories and start server
       run: |
         mkdir -p mlruns
+        mlflow server \
+          --host 127.0.0.1 \
+          --port 5000 \
+          --backend-store-uri sqlite:///mlflow.db \
+          --default-artifact-root ./mlruns \
+          --workers 4 &
+        sleep 10  # Give MLflow server time to start
         
     - name: Run Training Pipeline
       env:
-        MLFLOW_TRACKING_URI: http://localhost:5000
+        MLFLOW_TRACKING_URI: http://127.0.0.1:5000
         MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING: true
         MLFLOW_HTTP_REQUEST_MAX_RETRIES: 5
         MLFLOW_HTTP_REQUEST_TIMEOUT: 300
