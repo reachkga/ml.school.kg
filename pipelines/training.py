@@ -345,7 +345,9 @@ class Training(FlowSpec, FlowMixin):
             "MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING": "true",
             "MLFLOW_HTTP_REQUEST_MAX_RETRIES": "5",
             "MLFLOW_HTTP_REQUEST_TIMEOUT": "300",
-            "MLFLOW_TRACKING_INSECURE_TLS": "true"
+            "MLFLOW_TRACKING_INSECURE_TLS": "true",
+            "MLFLOW_SYSTEM_METRICS_SAMPLES_BEFORE_LOGGING": "1",
+            "MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL": "1"
         },
     )
     @step
@@ -354,8 +356,14 @@ class Training(FlowSpec, FlowMixin):
         import mlflow
         import numpy as np
         import matplotlib.pyplot as plt
-        from sklearn.metrics import confusion_matrix
-        from io import BytesIO
+        from sklearn.metrics import (
+            confusion_matrix, 
+            precision_score, 
+            recall_score,
+            classification_report
+        )
+        import tempfile
+        import os
         import psutil
         import platform
         import sys
@@ -368,69 +376,40 @@ class Training(FlowSpec, FlowMixin):
             include=["mlflow_run_id", "mlflow_tracking_uri"]
         )
 
-        # Calculate metrics as before
+        # Enable system metrics logging explicitly
+        mlflow.enable_system_metrics_logging()
+
+        # Calculate basic metrics as before
         metrics = [[i.accuracy, i.loss] for i in inputs]
         self.accuracy, self.loss = np.mean(metrics, axis=0)
         self.accuracy_std, self.loss_std = np.std(metrics, axis=0)
 
-        # Create confusion matrix from all folds
-        y_true = []
-        y_pred = []
-        for inp in inputs:
-            true_labels = np.argmax(inp.y_test, axis=1)
-            pred_labels = np.argmax(inp.model.predict(inp.x_test, verbose=0), axis=1)
-            y_true.extend(true_labels)
-            y_pred.extend(pred_labels)
+        # Calculate precision and recall for each fold
+        precisions = []
+        recalls = []
+        
+        for fold in inputs:
+            # Get predictions
+            y_pred = fold.model.predict(fold.x_test)
+            y_pred_classes = np.argmax(y_pred, axis=1)
+            y_true_classes = np.argmax(fold.y_test, axis=1)
+            
+            # Calculate metrics
+            precision = precision_score(y_true_classes, y_pred_classes, average='weighted')
+            recall = recall_score(y_true_classes, y_pred_classes, average='weighted')
+            
+            precisions.append(precision)
+            recalls.append(recall)
+        
+        # Calculate mean and std for precision and recall
+        self.precision = np.mean(precisions)
+        self.precision_std = np.std(precisions)
+        self.recall = np.mean(recalls)
+        self.recall_std = np.std(recalls)
 
-        # Define class labels manually since we know them
-        class_labels = ['Adelie', 'Chinstrap', 'Gentoo']
-        
-        # Create confusion matrix
-        cm = confusion_matrix(y_true, y_pred)
-        
-        # Create visualization
-        fig, ax = plt.subplots(figsize=(10, 8))
-        im = ax.imshow(cm, cmap='Blues')
-        
-        # Add colorbar
-        plt.colorbar(im)
-        
-        # Add labels
-        ax.set_xticks(np.arange(len(class_labels)))
-        ax.set_yticks(np.arange(len(class_labels)))
-        ax.set_xticklabels(class_labels)
-        ax.set_yticklabels(class_labels)
-        
-        # Rotate x labels for better readability
-        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-        
-        # Add title and axis labels
-        ax.set_title('Confusion Matrix - Cross Validation Results')
-        ax.set_ylabel('True Label')
-        ax.set_xlabel('Predicted Label')
-        
-        # Add text annotations
-        for i in range(len(class_labels)):
-            for j in range(len(class_labels)):
-                text = ax.text(j, i, cm[i, j],
-                             ha="center", va="center", color="black")
-        
-        # Adjust layout to prevent label cutoff
-        plt.tight_layout()
-        
-        # Convert plot to bytes
-        buf = BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        
-        # Save plot for the card
-        current.card.append(
-            Image(buf.getvalue()),  # Pass bytes instead of figure
-            "### Model Evaluation Results\n"
-            f"- **Accuracy**: {self.accuracy:.3f} ±{self.accuracy_std:.3f}\n"
-            f"- **Loss**: {self.loss:.3f} ±{self.loss_std:.3f}"
-        )
-        plt.close()
+        # Print detailed classification report for the last fold
+        print("\nDetailed Classification Report:")
+        print(classification_report(y_true_classes, y_pred_classes))
 
         # Log to MLflow with retry logic
         max_retries = 3
@@ -440,42 +419,68 @@ class Training(FlowSpec, FlowMixin):
             try:
                 mlflow.set_tracking_uri(self.mlflow_tracking_uri)
                 with mlflow.start_run(run_id=self.mlflow_run_id):
-                    # Log metrics
+                    # Log all metrics
                     mlflow.log_metrics({
                         "cross_validation_accuracy": self.accuracy,
                         "cross_validation_accuracy_std": self.accuracy_std,
                         "cross_validation_loss": self.loss,
                         "cross_validation_loss_std": self.loss_std,
+                        "cross_validation_precision": self.precision,
+                        "cross_validation_precision_std": self.precision_std,
+                        "cross_validation_recall": self.recall,
+                        "cross_validation_recall_std": self.recall_std,
                     })
 
-                    # Log system metrics
+                    # Create and log confusion matrix visualization
+                    plt.figure(figsize=(10, 8))
+                    cm = confusion_matrix(y_true_classes, y_pred_classes)
+                    plt.imshow(cm, interpolation='nearest', cmap='Blues')
+                    plt.title('Confusion Matrix')
+                    plt.colorbar()
+                    
+                    # Add labels
+                    classes = np.unique(y_true_classes)
+                    tick_marks = np.arange(len(classes))
+                    plt.xticks(tick_marks, classes, rotation=45)
+                    plt.yticks(tick_marks, classes)
+                    
+                    # Add numbers to the plot
+                    for i in range(cm.shape[0]):
+                        for j in range(cm.shape[1]):
+                            plt.text(j, i, str(cm[i, j]),
+                                    horizontalalignment="center",
+                                    color="white" if cm[i, j] > cm.max() / 2 else "black")
+                    
+                    plt.ylabel('True Label')
+                    plt.xlabel('Predicted Label')
+                    plt.tight_layout()
+                    
+                    # Save plot to a temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                        plt.savefig(tmp.name, format='png')
+                        # Log the temporary file
+                        mlflow.log_artifact(tmp.name, "confusion_matrix.png")
+                    
+                    # Clean up
+                    plt.close()
+                    os.unlink(tmp.name)  # Delete the temporary file
+
+                    # Log system metrics explicitly
                     mlflow.log_metrics({
-                        "cpu_percent": psutil.cpu_percent(),
-                        "memory_percent": psutil.virtual_memory().percent,
-                        "disk_usage_percent": psutil.disk_usage('/').percent,
+                        "system/cpu_utilization": psutil.cpu_percent(),
+                        "system/memory_utilization": psutil.virtual_memory().percent,
+                        "system/disk_utilization": psutil.disk_usage('/').percent,
+                        "system/available_memory": psutil.virtual_memory().available / (1024 * 1024 * 1024),  # GB
+                        "system/total_memory": psutil.virtual_memory().total / (1024 * 1024 * 1024),  # GB
                     })
 
-                    # Log system parameters
+                    # Log additional system information as parameters
                     mlflow.log_params({
-                        "python_version": sys.version,
-                        "platform": platform.platform(),
-                        "processor": platform.processor(),
-                        "cpu_count": psutil.cpu_count(),
-                        "total_memory_gb": round(psutil.virtual_memory().total / (1024**3), 2),
-                        "machine": platform.machine(),
-                        "os": platform.system(),
+                        "system/cpu_count": psutil.cpu_count(),
+                        "system/platform": platform.platform(),
+                        "system/python_version": platform.python_version(),
+                        "system/processor": platform.processor()
                     })
-
-                    # Try to log GPU info if available
-                    try:
-                        import torch
-                        if torch.cuda.is_available():
-                            mlflow.log_params({
-                                "gpu_name": torch.cuda.get_device_name(0),
-                                "gpu_count": torch.cuda.device_count(),
-                            })
-                    except ImportError:
-                        pass
 
                 # If we get here, logging was successful
                 break
@@ -483,7 +488,6 @@ class Training(FlowSpec, FlowMixin):
             except MlflowException as e:
                 if attempt == max_retries - 1:  # Last attempt
                     print(f"Warning: Failed to log to MLflow after {max_retries} attempts. Error: {e}")
-                    # Continue execution without MLflow logging
                 else:
                     print(f"MLflow logging attempt {attempt + 1} failed. Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
