@@ -600,31 +600,70 @@ class Training(FlowSpec, FlowMixin):
         This function will prepare and register the final model in the Model Registry.
         This will be the model that we trained using the entire dataset.
 
-        We'll only register the model if its accuracy is above a predefined threshold.
+        We'll only register the model if its accuracy is better than the previous model's accuracy.
+        If no previous model exists, we'll use the default accuracy threshold.
         """
         import tempfile
-
         import mlflow
+        from mlflow.entities.model_registry.model_version_status import ModelVersionStatus
 
-        # Since this is a join step, we need to merge the artifacts from the incoming
-        # branches to make them available here.
+        # Merge artifacts from incoming branches
         self.merge_artifacts(inputs)
 
-        # We only want to register the model if its accuracy is above the threshold
-        # specified by the `accuracy_threshold` parameter.
-        if self.accuracy >= self.accuracy_threshold:
-            logging.info("Registering model...")
+        # Connect to MLflow
+        mlflow.set_tracking_uri(self.mlflow_tracking_uri)
 
-            # We'll register the model under the experiment we started at the beginning
-            # of the flow. We also need to create a temporary directory to store the
-            # model artifacts.
-            mlflow.set_tracking_uri(self.mlflow_tracking_uri)
+        # Get the accuracy threshold based on previous model performance
+        try:
+            client = mlflow.tracking.MlflowClient()
+            latest_version = client.search_model_versions("name='penguins'")
+            
+            if latest_version:
+                # Sort versions by creation timestamp to get the most recent
+                latest_version = sorted(
+                    latest_version, 
+                    key=lambda x: x.creation_timestamp, 
+                    reverse=True
+                )[0]
+                
+                # Get the run that created this model version
+                run = client.get_run(latest_version.run_id)
+                previous_accuracy = run.data.metrics.get('cross_validation_accuracy', 0.0)
+                
+                # Use previous model's accuracy as threshold
+                accuracy_threshold = previous_accuracy
+                logging.info(
+                    "Found previous model version %s with accuracy %.4f", 
+                    latest_version.version, 
+                    previous_accuracy
+                )
+            else:
+                # No previous model found, use default threshold
+                accuracy_threshold = self.accuracy_threshold
+                logging.info(
+                    "No previous model found. Using default accuracy threshold: %.4f", 
+                    accuracy_threshold
+                )
+        except Exception as e:
+            logging.warning("Error checking previous model accuracy: %s", str(e))
+            accuracy_threshold = self.accuracy_threshold
+            logging.info(
+                "Using default accuracy threshold due to error: %.4f", 
+                accuracy_threshold
+            )
+
+        # Only register if current model is better than previous
+        if self.accuracy >= accuracy_threshold:
+            logging.info(
+                "Current model accuracy (%.4f) exceeds threshold (%.4f). Registering model...", 
+                self.accuracy, 
+                accuracy_threshold
+            )
+
             with (
                 mlflow.start_run(run_id=self.mlflow_run_id),
                 tempfile.TemporaryDirectory() as directory,
             ):
-                # We can now register the model using the name "penguins" in the Model
-                # Registry. This will automatically create a new version of the model.
                 mlflow.pyfunc.log_model(
                     python_model=Model(data_capture=False),
                     registered_model_name="penguins",
@@ -633,20 +672,16 @@ class Training(FlowSpec, FlowMixin):
                     artifacts=self._get_model_artifacts(directory),
                     pip_requirements=self._get_model_pip_requirements(),
                     signature=self._get_model_signature(),
-                    # Our model expects a Python dictionary, so we want to save the
-                    # input example directly as it is by setting`example_no_conversion`
-                    # to `True`.
                     example_no_conversion=True,
                 )
         else:
             logging.info(
-                "The accuracy of the model (%.2f) is lower than the accuracy threshold "
-                "(%.2f). Skipping model registration.",
+                "Current model accuracy (%.4f) does not exceed previous model (%.4f). "
+                "Skipping model registration.",
                 self.accuracy,
-                self.accuracy_threshold,
+                accuracy_threshold,
             )
 
-        # Let's now move to the final step of the pipeline.
         self.next(self.end)
 
     @step
