@@ -22,3 +22,5 @@ metaflow-card-html
 
 azure-ai-ml
 azureml-mlflow
+
+psutil==5.9.8

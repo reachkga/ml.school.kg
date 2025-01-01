@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+import platform
 
 from common import (
     PYTHON,
@@ -43,6 +44,7 @@ configure_logging()
         "mlflow",
         "setuptools",
         "python-dotenv",
+        "psutil",
     ),
 )
 class Training(FlowSpec, FlowMixin):
@@ -345,9 +347,8 @@ class Training(FlowSpec, FlowMixin):
     @environment(
         vars={
             "KERAS_BACKEND": os.getenv("KERAS_BACKEND", "jax"),
-        },
+        }
     )
-    @resources(memory=4096)
     @step
     def train_model(self):
         """Train the model that will be deployed to production.
@@ -355,6 +356,8 @@ class Training(FlowSpec, FlowMixin):
         This function will train the model using the entire dataset.
         """
         import mlflow
+        import sys
+        from pathlib import Path
 
         # Let's log the training process under the experiment we started at the
         # beginning of the flow.
@@ -363,6 +366,19 @@ class Training(FlowSpec, FlowMixin):
             # Let's disable the automatic logging of models during training so we
             # can log the model manually during the registration step.
             mlflow.autolog(log_models=False)
+
+            # Log system metrics using built-in modules
+            mlflow.log_params({
+                "os_name": os.name,
+                "platform": platform.platform(),
+                "python_version": platform.python_version(),
+                "python_implementation": platform.python_implementation(),
+                "cpu_count": os.cpu_count(),
+            })
+
+            # Log the pipeline source code
+            pipeline_path = Path(__file__)
+            mlflow.log_artifact(pipeline_path, artifact_path="source_code")
 
             # Let's now build and fit the model on the entire dataset.
             self.model = build_model(self.x.shape[1])
