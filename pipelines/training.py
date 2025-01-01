@@ -1,3 +1,4 @@
+# Test GitHub Actions workflow
 import logging
 import os
 from pathlib import Path
@@ -77,7 +78,7 @@ class Training(FlowSpec, FlowMixin):
     )
     @step
     def start(self):
-        """Start and prepare the Training pipeline."""
+        """Start the Training pipeline."""
         import mlflow
 
         self.mlflow_tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
@@ -88,29 +89,91 @@ class Training(FlowSpec, FlowMixin):
         self.mode = "production" if current.is_production else "development"
         logging.info("Running flow in %s mode.", self.mode)
 
-        self.data = self.load_dataset()
-
         try:
-            # Let's start a new MLFlow run to track everything that happens during the
-            # execution of this flow. We want to set the name of the MLFlow
-            # experiment to the Metaflow run identifier so we can easily
-            # recognize which experiment corresponds with each run.
             run = mlflow.start_run(run_name=current.run_id)
             self.mlflow_run_id = run.info.run_id
         except Exception as e:
             message = f"Failed to connect to MLflow server {self.mlflow_tracking_uri}."
             raise RuntimeError(message) from e
 
-        # This is the configuration we'll use to train the model. We want to set it up
-        # at this point so we can reuse it later throughout the flow.
         self.training_parameters = {
             "epochs": TRAINING_EPOCHS,
             "batch_size": TRAINING_BATCH_SIZE,
         }
 
-        # Now that everything is set up, we want to run a cross-validation process
-        # to evaluate the model and train a final model on the entire dataset. Since
-        # these two steps are independent, we can run them in parallel.
+        # Start with load_data instead of going directly to cross_validation and transform
+        self.next(self.load_data)
+
+    @step
+    def load_data(self):
+        """Load the data from CSV files."""
+        import pandas as pd
+        from pathlib import Path
+        
+        # Get all CSV files in the data directory
+        data_dir = Path("data")
+        csv_files = list(data_dir.glob("*.csv"))
+        
+        if not csv_files:
+            raise FileNotFoundError(f"No CSV files found in {data_dir}")
+        
+        # Load and combine all CSV files
+        dataframes = []
+        for file in csv_files:
+            try:
+                df = pd.read_csv(file)
+                print(f"Loaded {file} with {len(df)} rows")
+                
+                # Map common column name variations
+                column_mapping = {
+                    'culmen_length_mm': 'bill_length_mm',
+                    'culmen_depth_mm': 'bill_depth_mm',
+                    'flipper_length_mm': 'flipper_length_mm',
+                    'body_mass_g': 'body_mass_g',
+                    'species': 'species'
+                }
+                
+                # Rename columns if they exist with different names
+                df = df.rename(columns={k: v for k, v in column_mapping.items() 
+                                      if k in df.columns})
+                
+                dataframes.append(df)
+                
+            except Exception as e:
+                print(f"Error loading {file}: {e}")
+                continue
+        
+        # Combine all dataframes
+        if not dataframes:
+            raise ValueError("No valid CSV files were loaded")
+        
+        combined_df = pd.concat(dataframes, ignore_index=True)
+        print(f"Combined dataset has {len(combined_df)} rows")
+        
+        # Drop duplicates if any
+        combined_df = combined_df.drop_duplicates()
+        print(f"After removing duplicates: {len(combined_df)} rows")
+        
+        # Print available columns for debugging
+        print("Available columns:", combined_df.columns.tolist())
+        
+        # Verify required columns exist
+        required_columns = ["species", "bill_length_mm", "bill_depth_mm", 
+                           "flipper_length_mm", "body_mass_g"]
+        
+        missing_columns = [col for col in required_columns 
+                          if col not in combined_df.columns]
+        
+        if missing_columns:
+            raise ValueError(
+                f"Missing required columns: {missing_columns}\n"
+                f"Available columns: {combined_df.columns.tolist()}"
+            )
+        
+        # Store the data
+        self.data = combined_df
+        
+        # Now branch to cross_validation and transform
         self.next(self.cross_validation, self.transform)
 
     @card
