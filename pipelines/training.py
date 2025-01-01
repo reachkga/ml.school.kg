@@ -26,6 +26,7 @@ from metaflow import (
     resources,
     step,
 )
+from metaflow.cards import Image
 
 configure_logging()
 
@@ -273,34 +274,92 @@ class Training(FlowSpec, FlowMixin):
         # each fold.
         self.next(self.evaluate_model)
 
-    @card
+    @card(type="blank")
+    @environment(
+        vars={
+            "KERAS_BACKEND": os.getenv("KERAS_BACKEND", "jax"),
+        },
+    )
     @step
     def evaluate_model(self, inputs):
-        """Evaluate the overall cross-validation process.
-
-        This function averages the score computed for each individual model to
-        determine the final model performance.
-        """
+        """Evaluate the overall cross-validation process."""
         import mlflow
         import numpy as np
+        import matplotlib.pyplot as plt
+        from sklearn.metrics import confusion_matrix
+        from io import BytesIO
+        
+        # Merge existing artifacts
+        self.merge_artifacts(
+            inputs, 
+            include=["mlflow_run_id", "mlflow_tracking_uri"]
+        )
 
-        # We need access to the `mlflow_run_id` and `mlflow_tracking_uri` artifacts
-        # that we set at the start of the flow, but since we are in a join step, we
-        # need to merge the artifacts from the incoming branches to make them
-        # available.
-        self.merge_artifacts(inputs, include=["mlflow_run_id", "mlflow_tracking_uri"])
-
-        # Let's calculate the mean and standard deviation of the accuracy and loss from
-        # all the cross-validation folds. Notice how we are accumulating these values
-        # using the `inputs` parameter provided by Metaflow.
+        # Calculate metrics as before
         metrics = [[i.accuracy, i.loss] for i in inputs]
         self.accuracy, self.loss = np.mean(metrics, axis=0)
         self.accuracy_std, self.loss_std = np.std(metrics, axis=0)
 
-        logging.info("Accuracy: %f ±%f", self.accuracy, self.accuracy_std)
-        logging.info("Loss: %f ±%f", self.loss, self.loss_std)
+        # Create confusion matrix from all folds
+        y_true = []
+        y_pred = []
+        for inp in inputs:
+            true_labels = np.argmax(inp.y_test, axis=1)
+            pred_labels = np.argmax(inp.model.predict(inp.x_test, verbose=0), axis=1)
+            y_true.extend(true_labels)
+            y_pred.extend(pred_labels)
 
-        # Let's log the model metrics on the parent run.
+        # Define class labels manually since we know them
+        class_labels = ['Adelie', 'Chinstrap', 'Gentoo']
+        
+        # Create confusion matrix
+        cm = confusion_matrix(y_true, y_pred)
+        
+        # Create visualization
+        fig, ax = plt.subplots(figsize=(10, 8))
+        im = ax.imshow(cm, cmap='Blues')
+        
+        # Add colorbar
+        plt.colorbar(im)
+        
+        # Add labels
+        ax.set_xticks(np.arange(len(class_labels)))
+        ax.set_yticks(np.arange(len(class_labels)))
+        ax.set_xticklabels(class_labels)
+        ax.set_yticklabels(class_labels)
+        
+        # Rotate x labels for better readability
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+        
+        # Add title and axis labels
+        ax.set_title('Confusion Matrix - Cross Validation Results')
+        ax.set_ylabel('True Label')
+        ax.set_xlabel('Predicted Label')
+        
+        # Add text annotations
+        for i in range(len(class_labels)):
+            for j in range(len(class_labels)):
+                text = ax.text(j, i, cm[i, j],
+                             ha="center", va="center", color="black")
+        
+        # Adjust layout to prevent label cutoff
+        plt.tight_layout()
+        
+        # Convert plot to bytes
+        buf = BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        
+        # Save plot for the card
+        current.card.append(
+            Image(buf.getvalue()),  # Pass bytes instead of figure
+            "### Model Evaluation Results\n"
+            f"- **Accuracy**: {self.accuracy:.3f} ±{self.accuracy_std:.3f}\n"
+            f"- **Loss**: {self.loss:.3f} ±{self.loss_std:.3f}"
+        )
+        plt.close()
+
+        # Log metrics to MLflow as before
         mlflow.set_tracking_uri(self.mlflow_tracking_uri)
         with mlflow.start_run(run_id=self.mlflow_run_id):
             mlflow.log_metrics(
@@ -312,9 +371,6 @@ class Training(FlowSpec, FlowMixin):
                 },
             )
 
-        # After we finish evaluating the cross-validation process, we can send the flow
-        # to the registration step to register where we'll register the final version of
-        # the model.
         self.next(self.register_model)
 
     @card
