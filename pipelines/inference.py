@@ -44,6 +44,7 @@ class Model(mlflow.pyfunc.PythonModel):
         """
         self.data_capture = data_capture
         self.data_collection_uri = data_collection_uri
+        self.models = []  # Add list to store ensemble models
 
     def load_context(self, context: PythonModelContext) -> None:
         """Load the transformers and the Keras model specified as artifacts.
@@ -71,18 +72,20 @@ class Model(mlflow.pyfunc.PythonModel):
         logging.info("Keras backend: %s", os.environ.get("KERAS_BACKEND"))
         logging.info("Data collection URI: %s", self.data_collection_uri)
 
-        # First, we need to load the transformation pipelines from the artifacts. These
-        # will help us transform the input data and the output predictions. Notice that
-        # these transformation pipelines are the ones we fitted during the training
-        # phase.
+        # Load all models from the ensemble
+        self.models = []
+        for i in range(5):  # Load all 5 cross-validation models
+            model_path = context.artifacts[f"model_{i}"]
+            model = keras.saving.load_model(model_path)
+            self.models.append(model)
+
+        # Load transformers as before
         self.features_transformer = joblib.load(
             context.artifacts["features_transformer"],
         )
         self.target_transformer = joblib.load(context.artifacts["target_transformer"])
 
-        # Then, we can load the Keras model we trained.
-        self.model = keras.saving.load_model(context.artifacts["model"])
-
+        logging.info(f"Loaded ensemble of {len(self.models)} models")
         logging.info("Model is ready to receive requests")
 
     def predict(
@@ -113,10 +116,16 @@ class Model(mlflow.pyfunc.PythonModel):
 
         transformed_payload = self.process_input(model_input)
         if transformed_payload is not None:
-            logging.info("Making a prediction using the transformed payload...")
-            predictions = self.model.predict(transformed_payload, verbose=0)
-
-            model_output = self.process_output(predictions)
+            logging.info("Making predictions using the ensemble...")
+            # Get predictions from all models
+            predictions = []
+            for model in self.models:
+                pred = model.predict(transformed_payload, verbose=0)
+                predictions.append(pred)
+            
+            # Average the predictions
+            ensemble_predictions = np.mean(predictions, axis=0)
+            model_output = self.process_output(ensemble_predictions)
 
         # If the caller specified the `data_capture` parameter when making the
         # request, we should use it to determine whether we should capture the
