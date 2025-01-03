@@ -85,73 +85,87 @@ class Model(mlflow.pyfunc.PythonModel):
 
         logging.info("Model is ready to receive requests")
 
-    def predict(
-        self,
-        context: PythonModelContext,  # noqa: ARG002
-        model_input,
-        params: dict[str, Any] | None = None,
-    ) -> list:
-        """Handle the request received from the client.
+    def predict(self, context: PythonModelContext, model_input, params: dict[str, Any] | None = None) -> list:
+        """Make predictions using the model."""
+        import pandas as pd
+        import numpy as np
+        import logging
 
-        This method is responsible for processing the input data received from the
-        client, making a prediction using the model, and returning a readable response
-        to the client.
-
-        The caller can specify whether we should capture the input request and
-        prediction by using the `data_capture` parameter when making a request.
-        """
-        if isinstance(model_input, list | dict):
-            model_input = pd.DataFrame(model_input)
-
-        logging.info(
-            "Received prediction request with %d %s",
-            len(model_input),
-            "samples" if len(model_input) > 1 else "sample",
-        )
-
-        model_output = []
-
-        transformed_payload = self.process_input(model_input)
-        if transformed_payload is not None:
-            logging.info("Making a prediction using the transformed payload...")
-            predictions = self.model.predict(transformed_payload, verbose=0)
-
-            model_output = self.process_output(predictions)
-
-        # If the caller specified the `data_capture` parameter when making the
-        # request, we should use it to determine whether we should capture the
-        # input request and prediction.
-        if (
-            params
-            and params.get("data_capture", False) is True
-            or not params
-            and self.data_capture
-        ):
-            self.capture(model_input, model_output)
-
-        logging.info("Returning prediction to the client")
-        logging.debug("%s", model_output)
-
-        return model_output
-
-    def process_input(self, payload: pd.DataFrame) -> pd.DataFrame:
-        """Process the input data received from the client.
-
-        This method is responsible for transforming the input data received from the
-        client into a format that can be used by the model.
-        """
-        logging.info("Transforming payload...")
-
-        # We need to transform the payload using the transformer. This can raise an
-        # exception if the payload is not valid, in which case we should return None
-        # to indicate that the prediction should not be made.
         try:
-            result = self.features_transformer.transform(payload)
-        except Exception:
-            logging.exception("There was an error processing the payload.")
-            return None
+            # Handle different input formats
+            if isinstance(model_input, dict) and 'inputs' in model_input:
+                data = pd.DataFrame(model_input['inputs'])
+            elif isinstance(model_input, pd.DataFrame):
+                if len(model_input.shape) == 3:
+                    # Reshape 3D DataFrame to 2D
+                    data = pd.DataFrame(model_input.values.reshape(model_input.shape[0], -1))
+                else:
+                    data = model_input
+            elif isinstance(model_input, np.ndarray):
+                # Handle numpy array input
+                if len(model_input.shape) == 3:
+                    data = pd.DataFrame(model_input.reshape(model_input.shape[0], -1))
+                else:
+                    data = pd.DataFrame(model_input)
+            else:
+                data = pd.DataFrame([model_input])
 
-        return result
+            logging.info(f"Input data shape: {data.shape}")
+            logging.info(f"Input columns: {data.columns.tolist()}")
+
+            # Ensure we have the expected columns
+            expected_columns = ['culmen_length_mm', 'culmen_depth_mm', 'flipper_length_mm', 
+                              'body_mass_g', 'sex', 'island']
+            
+            # If we have numeric indices, map them to expected column names
+            if all(isinstance(col, int) for col in data.columns):
+                data.columns = expected_columns
+
+            # Rename columns for the transformer
+            column_mapping = {
+                'culmen_length_mm': 'bill_length_mm',
+                'culmen_depth_mm': 'bill_depth_mm'
+            }
+            data = data.rename(columns=column_mapping)
+            
+            logging.info(f"Processed columns: {data.columns.tolist()}")
+
+            # Transform features
+            transformed_input = self.features_transformer.transform(data)
+            transformed_input = np.asarray(transformed_input)
+            
+            logging.info(f"Transformed input shape: {transformed_input.shape}")
+
+            # Get predictions
+            raw_predictions = self.model.predict(transformed_input, verbose=0)
+            predicted_classes = np.argmax(raw_predictions, axis=1)
+            confidences = np.max(raw_predictions, axis=1)
+
+            # Get species encoder and convert predictions to labels
+            species_encoder = self.target_transformer.named_transformers_['species']
+            predicted_labels = species_encoder.inverse_transform(
+                predicted_classes.reshape(-1, 1)
+            ).flatten()
+
+            # Format output
+            predictions = [
+                {
+                    "prediction": str(label),
+                    "confidence": float(confidence)
+                }
+                for label, confidence in zip(predicted_labels, confidences)
+            ]
+
+            logging.info(f"Predictions: {predictions}")
+            return predictions
+
+        except Exception as e:
+            logging.error(f"Error during prediction: {str(e)}", exc_info=True)
+            logging.error(f"Input type: {type(model_input)}")
+            if isinstance(model_input, (np.ndarray, pd.DataFrame)):
+                logging.error(f"Input shape: {model_input.shape}")
+            logging.error(f"Full error:", exc_info=True)
+            return []
 
     def process_output(self, output: np.ndarray) -> list:
         """Process the prediction received from the model.
