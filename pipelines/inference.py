@@ -230,13 +230,15 @@ class Model(mlflow.pyfunc.PythonModel):
         current_time = datetime.now(timezone.utc)
 
         try:
-            # Prepare JSON entry
-            json_entry = {
-                "timestamp": current_time.isoformat(),
-                "uuid": entry_uuid,
-                "input": data.to_dict(orient='records')[0],  # Get first record
-                "prediction": model_output[0] if model_output else None
-            }
+            # Prepare JSON entries for all samples
+            json_entries = []
+            for input_record, prediction in zip(data.to_dict(orient='records'), model_output):
+                json_entries.append({
+                    "timestamp": current_time.isoformat(),
+                    "uuid": str(uuid.uuid4()),  # Generate unique UUID for each entry
+                    "input": input_record,
+                    "prediction": prediction
+                })
 
             # Read existing JSON data
             json_data = []
@@ -248,14 +250,14 @@ class Model(mlflow.pyfunc.PythonModel):
                         json_data = []
                         logging.warning("Could not decode existing JSON, starting fresh")
 
-            # Append new entry
-            json_data.append(json_entry)
+            # Append new entries
+            json_data.extend(json_entries)
 
             # Write back to file
             with open('predictions.json', 'w') as f:
                 json.dump(json_data, f, indent=2)
             
-            logging.info("Successfully wrote to predictions.json")
+            logging.info(f"Successfully wrote {len(json_entries)} entries to predictions.json")
 
         except Exception as e:
             logging.error(f"Error writing to JSON: {str(e)}")

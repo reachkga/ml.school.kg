@@ -110,5 +110,117 @@
       "prediction": "Adelie",
       "confidence": 0.8663610816001892
     }
+  },
+  {
+    "timestamp": "2025-01-06T05:37:30.785962+00:00",
+    "uuid": "81e8ff76-ed74-4b9d-9659-e4ebcf100590",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.8663610816001892
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:41:49.810897+00:00",
+    "uuid": "3108a37f-0df0-4d8d-9887-92c6ed1058a8",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.9703415036201477
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:41:49.810897+00:00",
+    "uuid": "5a393492-5240-481c-bf0d-bbb3d392765e",
+    "input": {
+      "island": "Dream",
+      "culmen_length_mm": 46.5,
+      "culmen_depth_mm": 17.9,
+      "flipper_length_mm": 192.0,
+      "body_mass_g": 3500.0,
+      "sex": "FEMALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.5267868041992188
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:41:49.810897+00:00",
+    "uuid": "764cb95b-469d-4518-bb1f-8e1aebdcd63a",
+    "input": {
+      "island": "Biscoe",
+      "culmen_length_mm": 50.2,
+      "culmen_depth_mm": 15.2,
+      "flipper_length_mm": 216.0,
+      "body_mass_g": 6100.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Gentoo",
+      "confidence": 0.995071530342102
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:44:03.105477+00:00",
+    "uuid": "6a3aa9f9-1df0-4a8d-8a9c-670eb1ae7f28",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.8860003352165222
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:44:03.105477+00:00",
+    "uuid": "87bd4b50-57a1-4956-b527-9a10fed3b9f3",
+    "input": {
+      "island": "Dream",
+      "culmen_length_mm": 46.5,
+      "culmen_depth_mm": 17.9,
+      "flipper_length_mm": 192.0,
+      "body_mass_g": 3500.0,
+      "sex": "FEMALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.5205268859863281
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:44:03.105477+00:00",
+    "uuid": "11c8e3d5-4e78-46cf-9561-f4306619b142",
+    "input": {
+      "island": "Biscoe",
+      "culmen_length_mm": 50.2,
+      "culmen_depth_mm": 15.2,
+      "flipper_length_mm": 216.0,
+      "body_mass_g": 6100.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Gentoo",
+      "confidence": 0.9841833710670471
+    }
   }
 ]
