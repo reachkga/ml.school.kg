@@ -1,4 +1,13 @@
 import os
+import sys
+
+# Set Keras backend to JAX before any keras imports
+os.environ["KERAS_BACKEND"] = "jax"
+
+# Clear any existing keras modules to force reinit
+if 'keras' in sys.modules:
+    del sys.modules['keras']
+
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -205,3 +214,86 @@ def test_capture_on_invalid_output(model, monkeypatch):
     # The prediction and confidence columns should be None because the output
     # from the model was empty
     assert data == ("Torgersen", None, None)
+
+
+def test_predict_with_invalid_input():
+    """Test prediction with invalid/malformed input data"""
+    model = Model(data_collection_uri=None, data_capture=False)
+    
+    # Test various invalid inputs
+    assert model.predict(None, None) == []
+    assert model.predict(None, {}) == []
+    assert model.predict(None, pd.DataFrame()) == []
+    assert model.predict(None, np.array([])) == []
+
+
+def test_process_input_error_handling():
+    """Test process_input method error handling"""
+    model = Model(data_collection_uri=None, data_capture=False)
+    
+    # Test with invalid DataFrame
+    result = model.process_input(pd.DataFrame())
+    assert result is None
+    
+    # Test with missing required columns
+    result = model.process_input(pd.DataFrame({'wrong_column': [1]}))
+    assert result is None
+
+
+def test_capture_error_handling():
+    """Test data capture error handling"""
+    model = Model(data_collection_uri="/invalid/path/test.json", data_capture=True)
+    
+    # Test capture with invalid file path
+    model.capture(
+        pd.DataFrame({'island': ['Torgersen']}),
+        [{"prediction": "Adelie", "confidence": 0.6}]
+    )
+    # Should log error but not crash
+
+
+def test_different_input_formats():
+    """Test different input format handling"""
+    model = Model(data_collection_uri=None, data_capture=False)
+    model.features_transformer = Mock()
+    model.model = Mock()
+    model.process_output = Mock(return_value=[{"prediction": "Adelie", "confidence": 0.6}])
+    
+    # Test dictionary input
+    result = model.predict(None, {'inputs': [{'feature': 1}]})
+    assert len(result) > 0
+    
+    # Test list input
+    result = model.predict(None, [{'feature': 1}])
+    assert len(result) > 0
+    
+    # Test numpy array input
+    result = model.predict(None, np.array([[1, 2, 3]]))
+    assert len(result) > 0
+
+
+def test_logging_configuration():
+    """Test logging configuration"""
+    model = Model(data_collection_uri=None, data_capture=False)
+    
+    # Test with missing config file
+    model._configure_logging()
+    # Should default to basic config
+
+
+def test_column_renaming():
+    """Test column renaming logic"""
+    model = Model(data_collection_uri=None, data_capture=False)
+    model.features_transformer = Mock()
+    
+    # Test with culmen columns
+    input_data = pd.DataFrame({
+        'culmen_length_mm': [1],
+        'culmen_depth_mm': [2]
+    })
+    model.process_input(input_data)
+    
+    # Verify columns were renamed correctly
+    called_df = model.features_transformer.transform.call_args[0][0]
+    assert 'bill_length_mm' in called_df.columns
+    assert 'bill_depth_mm' in called_df.columns
