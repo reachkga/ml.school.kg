@@ -1,7 +1,7 @@
 import logging
 import logging.config
 import os
-import sqlite3
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -27,31 +27,24 @@ class Model(mlflow.pyfunc.PythonModel):
 
     def __init__(
         self,
-        data_collection_uri: str | None = "penguins.db",
+        json_collection_uri: str | None = "predictions.json",
         *,
         data_capture: bool = False,
+        storage_format: str = "json"
     ) -> None:
         """Initialize the model.
 
-        By default, the model will not collect the input requests and predictions. This
-        behavior can be overwritten on individual requests.
-
-        This constructor expects the connection URI to the storage medium where the data
-        will be collected. By default, the data will be stored in a SQLite database
-        named "penguins" and located in the root directory from where the model runs.
-        You can override the location by using the 'DATA_COLLECTION_URI' environment
-        variable.
+        Args:
+            json_collection_uri: Path to JSON file
+            data_capture: Whether to capture prediction data
+            storage_format: Storage format (only "json" supported)
         """
+        self.json_collection_uri = json_collection_uri
         self.data_capture = data_capture
-        self.data_collection_uri = data_collection_uri
+        self.storage_format = storage_format
 
     def load_context(self, context: PythonModelContext) -> None:
-        """Load the transformers and the Keras model specified as artifacts.
-
-        This function is called only once as soon as the model is constructed.
-        """
-        # By default, we want to use the JAX backend for Keras. You can use a different
-        # backend by setting the `KERAS_BACKEND` environment variable.
+        """Load the transformers and the Keras model specified as artifacts."""
         if not os.getenv("KERAS_BACKEND"):
             os.environ["KERAS_BACKEND"] = "jax"
 
@@ -60,30 +53,40 @@ class Model(mlflow.pyfunc.PythonModel):
         self._configure_logging()
         logging.info("Loading model context...")
 
-        # If the DATA_COLLECTION_URI environment variable is set, we should use it
-        # to specify the database filename. Otherwise, we'll use the default filename
-        # specified when the model was instantiated.
-        self.data_collection_uri = os.environ.get(
-            "DATA_COLLECTION_URI",
-            self.data_collection_uri,
+        # Handle JSON URI only
+        self.json_collection_uri = os.environ.get(
+            "JSON_COLLECTION_URI",
+            self.json_collection_uri,
         )
 
         logging.info("Keras backend: %s", os.environ.get("KERAS_BACKEND"))
-        logging.info("Data collection URI: %s", self.data_collection_uri)
+        logging.info("JSON collection URI: %s", self.json_collection_uri)
 
-        # First, we need to load the transformation pipelines from the artifacts. These
-        # will help us transform the input data and the output predictions. Notice that
-        # these transformation pipelines are the ones we fitted during the training
-        # phase.
+        # Initialize JSON file if it doesn't exist
+        self._initialize_storage()
+
+        # Load model components
         self.features_transformer = joblib.load(
             context.artifacts["features_transformer"],
         )
         self.target_transformer = joblib.load(context.artifacts["target_transformer"])
-
-        # Then, we can load the Keras model we trained.
         self.model = keras.saving.load_model(context.artifacts["model"])
 
         logging.info("Model is ready to receive requests")
+
+    def _initialize_storage(self):
+        """Initialize JSON storage file if it doesn't exist."""
+        try:
+            if not os.path.exists(self.json_collection_uri):
+                with open(self.json_collection_uri, 'w') as f:
+                    json.dump([], f)
+                logging.info(f"Created new JSON file at {self.json_collection_uri}")
+            elif os.path.getsize(self.json_collection_uri) == 0:
+                with open(self.json_collection_uri, 'w') as f:
+                    json.dump([], f)
+                logging.info(f"Initialized empty JSON file at {self.json_collection_uri}")
+        except Exception as e:
+            logging.error(f"Error initializing JSON file: {str(e)}")
 
     def predict(self, context: PythonModelContext, model_input, params: dict[str, Any] | None = None) -> list:
         """Make predictions using the model."""
@@ -92,17 +95,29 @@ class Model(mlflow.pyfunc.PythonModel):
         import logging
 
         try:
+            # Add explicit logging for params
+            logging.info(f"Received params: {params}")
+            
+            # FIXED: Properly extract storage format from params or use default
+            if params and 'storage_format' in params:
+                self.storage_format = params['storage_format']  # Update instance variable
+            logging.info(f"Using storage format: {self.storage_format}")
+            
+            # Extract data capture preference
+            should_capture = params.get('data_capture', self.data_capture) if params else self.data_capture
+            
+            # Log the settings
+            logging.info(f"Data capture: {should_capture}, Storage format: {self.storage_format}")
+            
             # Handle different input formats
             if isinstance(model_input, dict) and 'inputs' in model_input:
                 data = pd.DataFrame(model_input['inputs'])
             elif isinstance(model_input, pd.DataFrame):
                 if len(model_input.shape) == 3:
-                    # Reshape 3D DataFrame to 2D
                     data = pd.DataFrame(model_input.values.reshape(model_input.shape[0], -1))
                 else:
                     data = model_input
             elif isinstance(model_input, np.ndarray):
-                # Handle numpy array input
                 if len(model_input.shape) == 3:
                     data = pd.DataFrame(model_input.reshape(model_input.shape[0], -1))
                 else:
@@ -156,15 +171,15 @@ class Model(mlflow.pyfunc.PythonModel):
                 for label, confidence in zip(predicted_labels, confidences)
             ]
 
+            # Capture data if enabled
+            if should_capture:
+                self.capture(data, predictions, self.storage_format)  # Use instance storage_format
+
             logging.info(f"Predictions: {predictions}")
             return predictions
 
         except Exception as e:
             logging.error(f"Error during prediction: {str(e)}", exc_info=True)
-            logging.error(f"Input type: {type(model_input)}")
-            if isinstance(model_input, (np.ndarray, pd.DataFrame)):
-                logging.error(f"Input shape: {model_input.shape}")
-            logging.error(f"Full error:", exc_info=True)
             return []
 
     def process_output(self, output: np.ndarray) -> list:
@@ -198,56 +213,52 @@ class Model(mlflow.pyfunc.PythonModel):
 
         return result
 
-    def capture(self, model_input: pd.DataFrame, model_output: list) -> None:
-        """Save the input request and output prediction to the database.
+    def capture(self, model_input: pd.DataFrame, model_output: list, storage_format: str = "json") -> None:
+        """Save the input request and output prediction to JSON only."""
+        logging.info("Capturing data in JSON format...")
 
-        This method will save the input request and output prediction to a SQLite
-        database. If the database doesn't exist, this function will create it.
-        """
-        logging.info("Storing input payload and predictions in the database...")
+        # Create a copy and rename columns back
+        data = model_input.copy()
+        reverse_mapping = {
+            'bill_length_mm': 'culmen_length_mm',
+            'bill_depth_mm': 'culmen_depth_mm'
+        }
+        data = data.rename(columns=reverse_mapping)
 
-        connection = None
+        # Generate UUID and timestamp
+        entry_uuid = str(uuid.uuid4())
+        current_time = datetime.now(timezone.utc)
+
         try:
-            connection = sqlite3.connect(self.data_collection_uri)
+            # Prepare JSON entry
+            json_entry = {
+                "timestamp": current_time.isoformat(),
+                "uuid": entry_uuid,
+                "input": data.to_dict(orient='records')[0],  # Get first record
+                "prediction": model_output[0] if model_output else None
+            }
 
-            # Let's create a copy from the model input so we can modify the DataFrame
-            # before storing it in the database.
-            data = model_input.copy()
+            # Read existing JSON data
+            json_data = []
+            if os.path.exists('predictions.json'):
+                with open('predictions.json', 'r') as f:
+                    try:
+                        json_data = json.load(f)
+                    except json.JSONDecodeError:
+                        json_data = []
+                        logging.warning("Could not decode existing JSON, starting fresh")
 
-            # We need to add the current time, the prediction and confidence columns
-            # to the DataFrame to store everything together.
-            data["date"] = datetime.now(timezone.utc)
+            # Append new entry
+            json_data.append(json_entry)
 
-            # Let's initialize the prediction and confidence columns with None. We'll
-            # overwrite them later if the model output is not empty.
-            data["prediction"] = None
-            data["confidence"] = None
+            # Write back to file
+            with open('predictions.json', 'w') as f:
+                json.dump(json_data, f, indent=2)
+            
+            logging.info("Successfully wrote to predictions.json")
 
-            # Let's also add a column to store the ground truth. This column can be
-            # used by the labeling team to provide the actual species for the data.
-            data["species"] = None
-
-            # If the model output is not empty, we should update the prediction and
-            # confidence columns with the corresponding values.
-            if model_output is not None and len(model_output) > 0:
-                data["prediction"] = [item["prediction"] for item in model_output]
-                data["confidence"] = [item["confidence"] for item in model_output]
-
-            # Let's automatically generate a unique identified for each row in the
-            # DataFrame. This will be helpful later when labeling the data.
-            data["uuid"] = [str(uuid.uuid4()) for _ in range(len(data))]
-
-            # Finally, we can save the data to the database.
-            data.to_sql("data", connection, if_exists="append", index=False)
-
-        except sqlite3.Error:
-            logging.exception(
-                "There was an error saving the input request and output prediction "
-                "in the database.",
-            )
-        finally:
-            if connection:
-                connection.close()
+        except Exception as e:
+            logging.error(f"Error writing to JSON: {str(e)}")
 
     def _configure_logging(self):
         """Configure how the logging system will behave."""

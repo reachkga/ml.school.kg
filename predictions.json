@@ -1,0 +1,114 @@
+[
+  {
+    "timestamp": "2025-01-05T14:13:57.911044+00:00",
+    "uuid": "38d24811-d013-4721-aaf9-de3f86ddd6d9",
+    "input": {
+      "island": "Biscoe",
+      "culmen_length_mm": 48.6,
+      "culmen_depth_mm": 16.0,
+      "flipper_length_mm": 230.0,
+      "body_mass_g": 5800.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Gentoo",
+      "confidence": 0.5452781319618225
+    }
+  },
+  {
+    "timestamp": "2025-01-05T14:15:01.127689+00:00",
+    "uuid": "2d35856d-4b82-4247-8b40-903147a75600",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.9820574522018433
+    }
+  },
+  {
+    "timestamp": "2025-01-05T14:18:00.030653+00:00",
+    "uuid": "a7303c65-a181-4523-85b7-3cd1756314c2",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.9820574522018433
+    }
+  },
+  {
+    "timestamp": "2025-01-05T14:19:19.445217+00:00",
+    "uuid": "b94a0c80-34a0-4128-a3d0-4a5143d6b37c",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.9820574522018433
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:11:43.475251+00:00",
+    "uuid": "bda187bb-119a-4372-8ffd-e8724c67c35c",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.9876725077629089
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:12:54.001970+00:00",
+    "uuid": "225b43c5-9c68-4864-8fba-b93d2f1c7918",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.9876725077629089
+    }
+  },
+  {
+    "timestamp": "2025-01-06T05:35:25.066753+00:00",
+    "uuid": "ffe02db6-d110-4212-a457-c70316f6d603",
+    "input": {
+      "island": "Torgersen",
+      "culmen_length_mm": 39.1,
+      "culmen_depth_mm": 18.7,
+      "flipper_length_mm": 181.0,
+      "body_mass_g": 3750.0,
+      "sex": "MALE"
+    },
+    "prediction": {
+      "prediction": "Adelie",
+      "confidence": 0.8663610816001892
+    }
+  }
+]
