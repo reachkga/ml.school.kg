@@ -119,15 +119,24 @@ class Endpoint(FlowSpec, FlowMixin):
         self.data.pop("species")
         self.data = self.data.dropna()
 
-        # If we want to introduce drift, we will add random noise to one of the
-        # numerical features in the data.
+        # If we want to introduce drift, we will add random noise to numerical features
         if self.action == "traffic" and self.drift:
             rng = np.random.default_rng()
-            self.data["body_mass_g"] += rng.uniform(
-                1,
-                3 * self.data["body_mass_g"].std(),
-                size=len(self.data),
-            )
+            
+            # Define drift intensity for each numeric column using correct column names
+            drift_config = {
+                'culmen_length_mm': 2.0,    # 2x std dev
+                'culmen_depth_mm': 1.5,     # 1.5x std dev
+                'flipper_length_mm': 2.5,   # 2.5x std dev
+                'body_mass_g': 3.0          # 3x std dev (keeping original intensity)
+            }
+
+            for column, std_multiplier in drift_config.items():
+                self.data[column] += rng.uniform(
+                    1,
+                    std_multiplier * self.data[column].std(),
+                    size=len(self.data),
+                )
 
         self.next(self.traffic)
 
@@ -136,18 +145,23 @@ class Endpoint(FlowSpec, FlowMixin):
         """Prepare the payload and send traffic to the hosted model."""
         import boto3
         import pandas as pd
+        import math
 
         if self.action == "traffic":
             self.dispatched_samples = 0
+            batch_size = 10
+            remaining_samples = self.samples
 
             try:
                 if self.target == "sagemaker":
                     sagemaker_runtime = boto3.Session().client("sagemaker-runtime")
 
-                while self.dispatched_samples < self.samples:
+                while remaining_samples > 0:
+                    # Calculate the size of the next batch
+                    current_batch_size = min(batch_size, remaining_samples)
+                    
                     payload = {}
-
-                    batch = self.data.sample(n=10)
+                    batch = self.data.sample(n=current_batch_size)
                     payload["inputs"] = [
                         {
                             k: (None if pd.isna(v) else v)
@@ -165,6 +179,8 @@ class Endpoint(FlowSpec, FlowMixin):
                         )
 
                     self.dispatched_samples += len(batch)
+                    remaining_samples -= current_batch_size
+
             except Exception:
                 logging.exception("There was an error sending traffic to the endpoint.")
 
