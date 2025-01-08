@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+from datetime import datetime, timedelta
 
 from common import PYTHON, FlowMixin, configure_logging, packages
 from metaflow import (
@@ -66,6 +67,15 @@ class Monitoring(FlowSpec, FlowMixin):
             "the most recent samples."
         ),
         default=200,
+    )
+
+    date = Parameter(
+        "date",
+        help=(
+            "The date from which to load samples from the production datastore. "
+            "The format should be YYYY-MM-DD."
+        ),
+        default=(datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d"),  # Default to three days ago
     )
 
     @card
