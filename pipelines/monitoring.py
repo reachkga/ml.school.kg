@@ -124,6 +124,8 @@ class Monitoring(FlowSpec, FlowMixin):
             TestNumberOfMissingValues,
             TestShareOfMissingValues,
             TestValueList,
+            TestMostCommonValueShare,
+            TestMostCommonValueShare,
         )
 
         test_suite = TestSuite(
@@ -156,6 +158,7 @@ class Monitoring(FlowSpec, FlowMixin):
                     ],
                     eq=0,
                 ),
+                TestMostCommonValueShare(column_name="sex"),
             ],
         )
 
